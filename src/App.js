@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import worker from "./mock-backend/browser";
-import { happyPath } from "./mock-backend/mock-scenarios";
+import { happyPath, errorPath } from "./mock-backend/mock-scenarios";
 
 export default function App() {
   useEffect(() => {
-    happyPath(worker);
-    worker.start();
+    if (worker) {
+      errorPath(worker);
+      worker.start();
+    }
   }, []);
   const [state, setState] = useState("Pristine");
   // makes a post request to the url with the data
@@ -22,9 +24,9 @@ export default function App() {
 
   const { register, handleSubmit } = useForm();
   const onSubmit = (data) => {
-    post("/api/submit", data)
-      .then((_) => setState("Success"))
-      .catch(() => setState("Error"));
+    post("/api/submit", data).then((resp) => {
+      resp.status === 200 ? setState("Success") : setState("Error");
+    });
   };
 
   return (
@@ -33,7 +35,7 @@ export default function App() {
       <form onSubmit={handleSubmit(onSubmit)}>
         <input defaultValue="test" {...register("example")} />
         <br />
-        <input type="submit" />
+        <button type="submit">submit</button>
       </form>
     </>
   );
