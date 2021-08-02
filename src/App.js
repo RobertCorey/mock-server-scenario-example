@@ -1,25 +1,40 @@
-import logo from './logo.svg';
-import './App.css';
+import React, { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import worker from "./mock-backend/browser";
+import { happyPath } from "./mock-backend/mock-scenarios";
 
-function App() {
+export default function App() {
+  useEffect(() => {
+    happyPath(worker);
+    worker.start();
+  }, []);
+  const [state, setState] = useState("Pristine");
+  // makes a post request to the url with the data
+  function post(url, data) {
+    return fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+  }
+
+  const { register, handleSubmit } = useForm();
+  const onSubmit = (data) => {
+    post("/api/submit", data)
+      .then((_) => setState("Success"))
+      .catch(() => setState("Error"));
+  };
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <>
+      State: {state}
+      <form onSubmit={handleSubmit(onSubmit)}>
+        <input defaultValue="test" {...register("example")} />
+        <br />
+        <input type="submit" />
+      </form>
+    </>
   );
 }
-
-export default App;
