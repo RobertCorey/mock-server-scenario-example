@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import worker from "./mock-backend/browser";
+import { setupWorker } from "msw";
 import { happyPath, errorPath } from "./mock-backend/mock-scenarios";
 
 export default function App() {
   useEffect(() => {
+    const worker = process.env.REACT_APP_MOCK && setupWorker();
     if (worker) {
       errorPath(worker);
       worker.start();
