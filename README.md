@@ -1,70 +1,174 @@
-# Getting Started with Create React App
+When writing an automated test with Jest for your React application, it's typical to mock the APIs your app communicates with to test how it handles different responses. Since you're already putting in the effort to create and maintain these mock api's wouldn't it be nice if you could use the same setup when running your App in Jest and in the browser? By using a test framework agnostic mock backend like
+[MSW](https://mswjs.io/) you can. In the next section let's see what that means in practice
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+## Developing and testing a new feature
 
-## Available Scripts
+Let's say we have been asked to create a form that makes a POST request to a new endpoint `/api/submit` when it's submitted. Then the form shows a success message when the endpoint returns a 200, or an error message otherwise. Here's an example implementation of this feature:
 
-In the project directory, you can run:
+```javascript
+import React, { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
 
-### `yarn start`
+export default function App() {
+  const [state, setState] = useState("Pristine");
+  // makes a post request to the url with the data
+  function post(url, data) {
+    return fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+  }
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+  const { register, handleSubmit } = useForm();
+  const onSubmit = (data) => {
+    post("/api/submit", data).then((resp) => {
+      resp.status === 200 ? setState("Success") : setState("Error");
+    });
+  };
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+  return (
+    <>
+      State: {state}
+      <form onSubmit={handleSubmit(onSubmit)}>
+        <input defaultValue="test" {...register("example")} />
+        <br />
+        <button type="submit">submit</button>
+      </form>
+    </>
+  );
+}
+```
 
-### `yarn test`
+Great now let's write some tests for it:
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+```javascript
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { setupServer } from "msw/node";
+import { rest } from "msw";
+import App from "./App";
 
-### `yarn build`
+const server = setupServer();
+beforeAll(() => server.listen());
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+test("it submits the form and displays a success message", async () => {
+  server.use(
+    rest.post("*/api/submit", (req, res, ctx) => {
+      return res(ctx.status(200));
+    })
+  );
+  render(<App />);
+  screen.getByText("State: Pristine");
+  userEvent.click(screen.getByText("submit"));
+  await waitFor(() => screen.getByText("State: Success"));
+});
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+test("it submits the form and displays an error message", async () => {
+  server.use(
+    rest.post("*/api/submit", (req, res, ctx) => {
+      return res(ctx.status(500));
+    })
+  );
+  render(<App />);
+  screen.getByText("State: Pristine");
+  userEvent.click(screen.getByText("submit"));
+  await waitFor(() => screen.getByText("State: Error"));
+});
+```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+We implemented our feature then we wrote some tests to make sure it has the intended behavior. However, wouldn't it be nice to look at this feature in the browser to see how it actually looks? This is a user interface after all! The problem is how do we get our application in the same state in our browser as it is in our tests?
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Extracting setup so it can be used by Jest and the browser
 
-### `yarn eject`
+One solution would be to extract our mock server setup to functions and share them across contexts. Let's create some mock server setup functions
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+```javascript
+import { rest } from "msw";
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+export function happyPath(server) {
+  server.use(
+    rest.post("*/api/submit", (req, res, ctx) => {
+      return res(ctx.status(200));
+    })
+  );
+}
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+export function errorPath(server) {
+  server.use(
+    rest.post("*/api/submit", (req, res, ctx) => {
+      return res(ctx.status(500));
+    })
+  );
+}
+```
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+now we can refactor our tests to use these new functions:
 
-## Learn More
+```javascript
+test("it submits the form and displays a success message", async () => {
+  happyPath(server);
+  render(<App />);
+  screen.getByText("State: Pristine");
+  userEvent.click(screen.getByText("submit"));
+  await waitFor(() => screen.getByText("State: Success"));
+});
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+test("it submits the form and displays an error message", async () => {
+  errorPath(server);
+  render(<App />);
+  screen.getByText("State: Pristine");
+  userEvent.click(screen.getByText("submit"));
+  await waitFor(() => screen.getByText("State: Error"));
+});
+```
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+Finally we can now temporarily setup a mock server in our App component and use one of the setup functions.
 
-### Code Splitting
+```javascript
+import { setupWorker } from "msw";
+import { happyPath } from "./mock-backend/mock-scenarios";
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+export default function App() {
+  useEffect(() => {
+    const worker = setupWorker();
+      happyPath(worker);
+      worker.start();
+  }, []);
+  const [state, setState] = useState("Pristine");
+  // makes a post request to the url with the data
+  function post(url, data) {
+  //...rest of component
+```
 
-### Analyzing the Bundle Size
+Now we can run our application in the browser, and it will be in the exact same state as it is at the beginning of our tests. We can do some manual QA and make sure we haven't made a mistake in our test.
+![Success Path](https://dev-to-uploads.s3.amazonaws.com/uploads/articles/s4rq3wb9c9f59mbih9ym.gif)
+Looks good, now let's change our setup to the error scenario by editing the useEffect code:
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+```javascript
+useEffect(() => {
+  const worker = setupWorker();
+  //change happyPath to errorPath
+  errorPath(worker);
+  worker.start();
+}, []);
+```
 
-### Making a Progressive Web App
+![Error Path](https://dev-to-uploads.s3.amazonaws.com/uploads/articles/wzj40fleoiothaf6m0rc.gif)
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+That looks good as well. Now would be a good time to add some styling to these different states now that we're sure they will appear correctly.
 
-### Advanced Configuration
+## Example Workflows
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+- Jest tests run in the node, which makes them fast and reliable, but can make them difficult to create and debug. You can begin by writing a mock scenario, and using it to develop a feature in the browser. Then use that same mock scenario to write a test for the feature you just developed.
 
-### Deployment
+- Say you are having difficulty debugging a Jest test another developer wrote. You can use the mock scenario in the browser, then manually follow the steps of the test until you encounter unexpected behavior.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+- Use a mock scenario to get your app into a difficult to reproduce state, then add styles.
 
-### `yarn build` fails to minify
+## Conclusion
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+Decoupling your mock backend from your tests will help you write better tests and power up your development experience. As long as you've written a test for a behavior you will always be able to quickly replicate it in the browser. The best part? It takes very little additional developer effort. This allows you to derive a TON of extra value from resources you already have.
